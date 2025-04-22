@@ -2,16 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>How Everything Works - Reaction Diffusion + Tonnetz Synthesis</title>
+  <title>How It Works - Torus Tonnetz Synthesizer</title>
+  <!-- MathJax CDN for LaTeX rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" id="MathJax-script" async></script>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
       background: #f9f9f9;
+      padding: 20px;
       line-height: 1.6;
+      color: #333;
     }
     h1, h2, h3 {
-      color: #333;
+      color: #222;
+    }
+    h1 {
+      margin-bottom: 20px;
+      font-size: 2.8em;
+      text-align: center;
+    }
+    .section {
+      margin-bottom: 40px;
     }
     pre {
       background: #eee;
@@ -19,139 +30,129 @@
       border: 1px solid #ccc;
       overflow-x: auto;
     }
-    .section {
-      margin-bottom: 40px;
+    .equation {
+      background: #fff;
+      border-left: 3px solid #007ACC;
+      padding: 10px;
+      margin: 10px 0;
+      font-family: Consolas, monospace;
+      font-size: 1.1em;
     }
-    .code {
-      font-size: 0.9em;
+    .image-placeholder {
+      display: block;
+      width: 100%;
+      max-width: 600px;
+      margin: 20px auto;
+      border: 1px solid #ccc;
+      background: #ddd;
+      padding: 10px;
+      text-align: center;
+      font-style: italic;
+      color: #555;
     }
     a {
-      color: #0066cc;
+      color: #007ACC;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
     }
   </style>
 </head>
 <body>
-  <h1>Reaction Diffusion + Tonnetz Synthesis System: How It Works</h1>
-  <p>This document explains how the various parts of the project work together to create an interactive system that blends a reaction–diffusion simulation, a Tonnetz grid visualization, sound interpolation, and multiple instrument synthesis options. The system also provides a 3D view using Three.js.</p>
+  <h1>Torus Tonnetz Synthesizer: How It Works</h1>
 
-  <div class="section" id="rd-simulation">
-    <h2>1. Reaction–Diffusion Simulation</h2>
+  <div class="section" id="reaction-diffusion">
+    <h2>1. Gray–Scott Reaction–Diffusion Simulation</h2>
     <p>
-      The reaction–diffusion simulation is implemented using a canvas (named <code>simCanvas</code>) that runs a Gray–Scott–type simulation. The grid is internally represented by two 2D arrays, <code>u</code> and <code>v</code>, of size 200×200.
+      The simulation is based on a variant of the Gray–Scott model. Two chemical concentrations, <em>u</em> and <em>v</em>, evolve over time on a 200×200 grid. Their evolution is governed by the following PDEs:
+    </p>
+    <p class="equation">
+      $$\frac{\partial u}{\partial t} = D_u\,\nabla^2 u - u\,v^2 + F\,(1 - u)$$
+    </p>
+    <p class="equation">
+      $$\frac{\partial v}{\partial t} = D_v\,\nabla^2 v + u\,v^2 - (F+k)\,v$$
     </p>
     <p>
-      Each frame, the simulation calculates the Laplacian of each cell and updates the state using the Gray–Scott equations. The reaction parameters <code>DU</code>, <code>DV</code>, <code>F</code>, and <code>K</code> are controlled via the user interface at the bottom left.
+      Here:
     </p>
+    <ul>
+      <li><em>D<sub>u</sub></em> and <em>D<sub>v</sub></em> are the diffusion rates for u and v.</li>
+      <li><em>F</em> is the feed rate, and <em>k</em> is the kill rate.</li>
+      <li>The Laplacian operator \( \nabla^2 \) is numerically approximated for each cell.</li>
+    </ul>
     <p>
-      The simulation is drawn four times onto an overlay canvas to create a 400×400 view, which is then used as a texture in a Three.js 3D scene.
+      <strong>Reaction–Diffusion:</strong>
+      I initially implemented this in pygame as that was the most straightforward tool, but I ultimately rewrote everything in JavaScript using Three.js since that has support for nice 3D graphics and it would be really straighforward to make a simple website.
     </p>
-    <pre class="code">
-function updateRD() {
-  // Read parameters from UI.
-  params.DU = parseFloat(document.getElementById("DU").value);
-  params.DV = parseFloat(document.getElementById("DV").value);
-  params.F  = parseFloat(document.getElementById("F").value);
-  params.K  = parseFloat(document.getElementById("K").value);
-  // Update each cell using Gray–Scott equations.
-  for (let y = 0; y < HEIGHT; y++) {
-    for (let x = 0; x < WIDTH; x++) {
-      const a = u[y][x], b = v[y][x];
-      const ua = lap(u, x, y);
-      const vb = lap(v, x, y);
-      const uvv = a * b * b;
-      u_next[y][x] = a + (params.DU * ua - uvv + params.F * (1 - a)) * dt;
-      v_next[y][x] = b + (params.DV * vb + uvv - (params.F + params.K) * b) * dt;
-    }
-  }
-  // Swap the arrays.
-  [u, u_next] = [u_next, u];
-  [v, v_next] = [v_next, v];
-}
-    </pre>
+    <img src="figs/pythonRD.png" alt="Reaction–Diffusion Diagram Placeholder" class="image-placeholder">
   </div>
 
-  <div class="section" id="tonnetz-grid">
-    <h2>2. Tonnetz Grid and Interpolation</h2>
+  <div class="section" id="tonnetz">
+    <h2>2. Tonnetz Grid & Sound Interpolation</h2>
     <p>
-      The Tonnetz is a network originally used in music theory to display the relationships between pitches (or chords). In this project the Tonnetz grid is hardcoded as a 6×12 array. Each cell contains a note (e.g. "C", "G", "D", etc.) and its (x, y) position is computed based on a horizontal spacing and a vertical margin.
+      The Tonnetz is a musical network that shows relationships between pitches. Our grid is a 6×12 array where each cell contains a musical note (e.g., “C”, “G”, “D”, etc.) arranged in a pattern that reflects harmonic relationships.
     </p>
     <p>
-      Lines connecting the grid points are drawn on the overlay canvas. Horizontal lines connect adjacent points in a row. Diagonal connections are drawn between rows so that you see the characteristic interlocking network.
+      The grid is drawn on an overlay canvas with connecting lines (both horizontal and diagonal) to form the complete network. When a user clicks or drags on the canvas, the system finds the three closest grid points.
     </p>
-    <pre class="code">
-// Example: Grid and connection drawing (simplified excerpt)
-function drawHardcodedTonnetz(ctx) {
-  ctx.save();
-  ctx.strokeStyle = "rgba(255,255,255,0.3)";
-  // Draw horizontal lines between adjacent points.
-  for (let row = 0; row < numRows; row++) {
-    for (let col = 0; col < numCols - 1; col++) {
-      const pt1 = gridPoints[row][col];
-      const pt2 = gridPoints[row][col+1];
-      ctx.beginPath();
-      ctx.moveTo(pt1.x, pt1.y);
-      ctx.lineTo(pt2.x, pt2.y);
-      ctx.stroke();
-    }
-  }
-  // Draw diagonal connections (logic differs on odd/even rows).
-  // ... (see complete code for full details)
-  ctx.restore();
-}
-    </pre>
     <p>
-      When a user clicks or drags on the overlay canvas, the system collects the three closest Tonnetz points. In monophonic mode, these points are used to compute an interpolated frequency (weighted by the reciprocal of the distance) for a single note. In harmony mode, all three candidate notes are played simultaneously with volumes weighted by their computed weights.
+      In <strong>single note mode</strong>, their frequencies are interpolated using an inverse‑distance weighted average. The interpolated frequency \( f_{interp} \) is computed as:
     </p>
+    <p class="equation">
+      $$f_{interp} = \frac{\sum_{i=1}^{3} \frac{1}{d_i+\epsilon} f_i}{\sum_{i=1}^{3} \frac{1}{d_i+\epsilon}}$$
+    </p>
+    <p>
+      Here, \( f_i \) are the candidate frequencies and \( d_i \) are their distances from the click point (with \( \epsilon \) as a small constant for stability). In <strong>harmony mode</strong>, all three candidate notes are played simultaneously, with volumes scaled by the corresponding weights.
+    </p>
+    <p>
+      <strong>Tonnetz Diagram:</strong> taken from /https://thatsmaths.com/2017/12/28/doughnuts-and-tonnetze/
+    </p>
+    <img src="figs/tonnetz.png" alt="Tonnetz Diagram Placeholder" class="image-placeholder">
   </div>
 
   <div class="section" id="sound-synthesis">
     <h2>3. Sound Synthesis and Instrument Options</h2>
     <p>
-      The project uses the Web Audio API to generate sounds. There are multiple synthesis methods:
+      I have very little knowledge about music, so I had ChatGPT write functions to create various sounds which I felt sounded cool. The result uses the Web Audio API for real-time sound synthesis. Multiple instrument options are available:
     </p>
     <ul>
-      <li><strong>Basic Synth:</strong> Plays a simple oscillator. Several waveform options are available (sine, square, triangle, and sawtooth).</li>
-      <li><strong>FM Synth:</strong> Uses frequency modulation by creating a modulator oscillator whose output modulates the carrier oscillator's frequency.</li>
-      <li><strong>Bell:</strong> Generates a bell-like tone with a fast attack and long exponential decay.</li>
-      <li><strong>Organ:</strong> Simulates an organ-like sound by playing two detuned square waves.</li>
+      <li><strong>Basic Synth:</strong> A single oscillator with selectable waveforms (sine, square, triangle, sawtooth).</li>
+      <li><strong>FM Synth:</strong> Uses a modulator oscillator to create complex timbres.</li>
+      <li><strong>Bell:</strong> Produces a bell–like tone with a fast attack and long decay.</li>
+      <li><strong>Organ:</strong> Simulates an organ by combining two detuned square waves.</li>
     </ul>
     <p>
-      The instrument is selected from the dropdown in the top–right. In the code, the corresponding function is called when a note is triggered. For example:
+      The instrument is chosen from a dropdown in the top–right. In single note mode, one note (from the weighted interpolation) is played. In harmony mode, all three candidate notes are played simultaneously with gains scaled according to their inverse–distance weights.
     </p>
-    <pre class="code">
-function playBasicTone(freq, type, vol = 0.2) {
-  let osc = audioCtx.createOscillator();
-  let gain = audioCtx.createGain();
-  osc.type = type; // "sine", "square", "triangle", or "sawtooth"
-  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
-  osc.connect(gain);
-  gain.connect(audioCtx.destination);
-  osc.start();
-  osc.stop(audioCtx.currentTime + 0.5);
-}
-    </pre>
     <p>
-      For harmony mode, the top three candidate notes are played concurrently with their gains scaled according to their inverse–distance weights.
+      <strong>Instrument Options:</strong>
     </p>
+    <img src="figs/instruments.png" alt="Synth Diagram Placeholder" class="image-placeholder">
   </div>
 
   <div class="section" id="threejs">
-    <h2>4. Three.js 3D View</h2>
+    <h2>4. Three.js 3D Integration</h2>
     <p>
-      A Three.js scene is created to provide a 3D view of the reaction–diffusion texture. The simulation canvas (<code>simCanvas</code>) is used as a texture for a torus. The torus is animated (rotating slightly) while the texture is updated each frame.
+      The live reaction–diffusion simulation is also used as a texture for a 3D torus in a Three.js scene. The torus rotates slowly, adding a dynamic visual element that complements the instrument's sound generation.
     </p>
+    <p>
+      <strong>3D View Screenshot:</strong>
+    </p>
+    <img src="figs/three.png" alt="3D View Placeholder" class="image-placeholder">
     <pre class="code">
+// Simplified Three.js initialization:
 function initThree() {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
   camera.position.z = 3;
+  
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   document.body.appendChild(renderer.domElement);
   
   const light = new THREE.DirectionalLight(0xffffff, 1);
-  light.position.set(3, 3, 3);
+  light.position.set(3,3,3);
   scene.add(light);
   
   texture = new THREE.CanvasTexture(simCanvas);
@@ -175,20 +176,17 @@ function initThree() {
   <div class="section" id="interaction">
     <h2>5. User Interaction</h2>
     <p>
-      The system is highly interactive. Users can click or drag on the overlay canvas (top right) to both inject disturbances into the reaction–diffusion simulation and trigger sound events.
-    </p>
-    <p>
-      When a user clicks:
+      The system is fairly interactive. Users can click or drag on the overlay canvas to disturb the reaction–diffusion simulation and trigger sound synthesis.
     </p>
     <ul>
-      <li>The code finds the three closest grid points on the Tonnetz.</li>
-      <li>It computes the weighted average frequency (for monophonic mode) or uses each candidate’s frequency (for harmony mode).</li>
-      <li>The selected instrument(s) are played accordingly.</li>
-      <li>The reaction–diffusion simulation is disturbed at the weighted average position.</li>
-      <li>A small visualization (in the bottom right) shows candidate points and the computed average.</li>
+      <li>The program finds the three closest Tonnetz grid points to the click position.</li>
+      <li>It computes a weighted average frequency using the equation above for monophonic mode, or uses the individual frequencies with weighted gains in harmony mode.</li>
+      <li>The selected instrument(s) are triggered to generate sound.</li>
+      <li>A localized disturbance is applied to the simulation at the weighted average position.</li>
+      <li>A visualization shows the candidate points and the computed average on a small canvas.</li>
     </ul>
     <pre class="code">
-// Excerpt from event handling code:
+// Example event handling excerpt:
 overlayCanvas.addEventListener("mousedown", e => {
   isDrawing = true;
   drawOnOverlay(e);
@@ -203,26 +201,7 @@ overlayCanvas.addEventListener("mousemove", e => {
     </pre>
   </div>
 
-  <div class="section" id="conclusion">
-    <h2>Conclusion</h2>
-    <p>
-      This project combines several creative coding techniques:
-    </p>
-    <ul>
-      <li>A reaction–diffusion simulation that provides evolving organic textures.</li>
-      <li>A Tonnetz grid that visually represents musical pitch relationships.</li>
-      <li>Sound synthesis using the Web Audio API with multiple instrument options and both monophonic and harmonic playback modes.</li>
-      <li>Integration of a Three.js 3D scene where the simulation texture is mapped onto a rotating torus.</li>
-    </ul>
-    <p>
-      Together, these components create a unique, multisensory interactive system where visuals and sound are driven by both deterministic simulation and user interaction.
-    </p>
-    <p>
-      For further customization, you can adjust synthesis parameters, grid dimensions, simulation parameters, or add additional instruments and effects. Enjoy exploring and making this project your own!
-    </p>
-  </div>
-
   <hr>
-  <p style="text-align: center; color: #666;">© 2025 Reaction Diffusion + Tonnetz Synthesis System</p>
+  <p style="text-align: center; color: #666;">© 2025 Torus Tonnetz Synthesizer</p>
 </body>
 </html>

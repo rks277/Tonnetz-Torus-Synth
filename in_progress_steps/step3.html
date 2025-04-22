@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Tonnetz on Reaction–Diffusion Torus with UI & Toggle</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: black; }
+    #ui {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(255, 255, 255, 0.9);
+      padding: 10px;
+      border-radius: 5px;
+      font-family: sans-serif;
+      z-index: 20;
+    }
+    #ui input { width: 60px; margin: 2px; }
+    #overlay {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      width: 150px;
+      height: 150px;
+      border: 1px solid white;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    DU: <input id="DU" value="0.16" step="0.01" type="number">
+    DV: <input id="DV" value="0.08" step="0.01" type="number"><br>
+    F:  <input id="F"  value="0.06" step="0.001" type="number">
+    K:  <input id="K"  value="0.062" step="0.001" type="number">
+    <button id="resetBtn">Reset</button><br>
+    <label>
+      <input type="checkbox" id="showTonnetz" checked> Show Tonnetz
+    </label>
+  </div>
+
+  <canvas id="overlay"></canvas>
+  
+  <script src="https://cdn.jsdelivr.net/npm/three@0.153.0/build/three.min.js"></script>
+  <script>
+    const WIDTH = 200, HEIGHT = 200;
+    let u, v, u_next, v_next;
+    const dt = 1.0;
+    const params = { DU: 0.16, DV: 0.08, F: 0.06, K: 0.062 };
+
+    const simCanvas = document.createElement('canvas');
+    simCanvas.width = WIDTH;
+    simCanvas.height = HEIGHT;
+    const simCtx = simCanvas.getContext('2d');
+
+    const overlayCanvas = document.getElementById('overlay');
+    const overlayCtx = overlayCanvas.getContext('2d');
+
+    function createGrid(val) {
+      return Array.from({ length: HEIGHT }, () => new Float32Array(WIDTH).fill(val));
+    }
+
+    function reset() {
+      u = createGrid(1);
+      v = createGrid(0);
+      u_next = createGrid(0);
+      v_next = createGrid(0);
+      const r = 20;
+      const cx = WIDTH / 2, cy = HEIGHT / 2;
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          const dx = x - cx, dy = y - cy;
+          if (dx * dx + dy * dy < r * r) {
+            v[y][x] = Math.random() * 0.5 + 0.5;
+            u[y][x] = 1 - v[y][x];
+          }
+        }
+      }
+    }
+
+    function lap(grid, x, y) {
+      const l = grid[y][(x - 1 + WIDTH) % WIDTH];
+      const r = grid[y][(x + 1) % WIDTH];
+      const u_ = grid[(y - 1 + HEIGHT) % HEIGHT][x];
+      const d = grid[(y + 1) % HEIGHT][x];
+      return l + r + u_ + d - 4 * grid[y][x];
+    }
+
+    function updateRD() {
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          const a = u[y][x], b = v[y][x];
+          const ua = lap(u, x, y);
+          const vb = lap(v, x, y);
+          const uvv = a * b * b;
+          u_next[y][x] = a + (params.DU * ua - uvv + params.F * (1 - a)) * dt;
+          v_next[y][x] = b + (params.DV * vb + uvv - (params.F + params.K) * b) * dt;
+        }
+      }
+      [u, u_next] = [u_next, u];
+      [v, v_next] = [v_next, v];
+    }
+
+    function drawRD() {
+      const imageData = simCtx.getImageData(0, 0, WIDTH, HEIGHT);
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          const i = (y * WIDTH + x) * 4;
+          const val = Math.min(255, Math.floor(v[y][x] * 255));
+          imageData.data[i] = val;
+          imageData.data[i + 1] = val;
+          imageData.data[i + 2] = val;
+          imageData.data[i + 3] = 255;
+        }
+      }
+      simCtx.putImageData(imageData, 0, 0);
+      overlayCtx.drawImage(simCanvas, 0, 0, overlayCanvas.width, overlayCanvas.height);
+    }
+
+    let scene, camera, renderer, torus, texture;
+    function initThree() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+      camera.position.z = 3;
+      
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+      
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(3, 3, 3);
+      scene.add(light);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+      
+      texture = new THREE.CanvasTexture(simCanvas);
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(2, 2);
+      
+      const geometry = new THREE.TorusGeometry(1, 0.4, 128, 256);
+      const material = new THREE.MeshStandardMaterial({
+        map: texture,
+        displacementMap: texture,
+        displacementScale: 0.2,
+        metalness: 0.2,
+        roughness: 0.7
+      });
+      
+      torus = new THREE.Mesh(geometry, material);
+      scene.add(torus);
+    }
+    
+    function tonnetzToTorus(cols, rows, R = 1, r = 0.4) {
+      const points = [];
+      for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+          const uAngle = (i / cols) * Math.PI * 2;
+          const vAngle = (j / rows) * Math.PI * 2;
+          const x = (R + r * Math.cos(vAngle)) * Math.cos(uAngle);
+          const y = (R + r * Math.cos(vAngle)) * Math.sin(uAngle);
+          const z = r * Math.sin(vAngle);
+          points.push(new THREE.Vector3(x, y, z));
+        }
+      }
+      return points;
+    }
+    
+    function createTonnetzLines(points, cols, rows) {
+      const geometry = new THREE.BufferGeometry();
+      const vertices = [];
+      
+      for (let j = 0; j < rows; j++) {
+        for (let i = 0; i < cols; i++) {
+          const index = j * cols + i;
+          const p = points[index];
+          const pRight = points[j * cols + ((i + 1) % cols)];
+          vertices.push(p.x, p.y, p.z, pRight.x, pRight.y, pRight.z);
+          const pDown = points[((j + 1) % rows) * cols + i];
+          vertices.push(p.x, p.y, p.z, pDown.x, pDown.y, pDown.z);
+        }
+      }
+      
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      const material = new THREE.LineBasicMaterial({ color: 0xff00ff, depthTest: false });
+      return new THREE.LineSegments(geometry, material);
+    }
+
+    let tonnetzObj;
+    function addTonnetzToTorus(cols = 12, rows = 7) {
+      const points = tonnetzToTorus(cols, rows);
+      tonnetzObj = createTonnetzLines(points, cols, rows);
+      torus.add(tonnetzObj);
+    }
+    
+    function animate() {
+      requestAnimationFrame(animate);
+      for (let i = 0; i < 10; i++) {
+        updateRD();
+      }
+      drawRD();
+      texture.needsUpdate = true;
+      
+      torus.rotation.x += 0.01;
+      torus.rotation.y += 0.01;
+      
+      renderer.render(scene, camera);
+    }
+    
+    document.getElementById('DU').addEventListener('change', e => { params.DU = parseFloat(e.target.value); });
+    document.getElementById('DV').addEventListener('change', e => { params.DV = parseFloat(e.target.value); });
+    document.getElementById('F').addEventListener('change', e  => { params.F  = parseFloat(e.target.value); });
+    document.getElementById('K').addEventListener('change', e  => { params.K  = parseFloat(e.target.value); });
+    document.getElementById('resetBtn').addEventListener('click', reset);
+    document.getElementById('showTonnetz').addEventListener('change', e => {
+      if (tonnetzObj) {
+        tonnetzObj.visible = e.target.checked;
+      }
+    });
+
+    reset();
+    initThree();
+    addTonnetzToTorus();
+    animate();
+  </script>
+</body>
+</html>

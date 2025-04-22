@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Reaction Diffusion + Tonnetz (Hardcoded)</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: black; }
+    #ui {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(255,255,255,0.9);
+      padding: 10px;
+      border-radius: 5px;
+      font-family: sans-serif;
+      z-index: 20;
+    }
+    #ui input {
+      margin: 2px;
+    }
+    #overlay {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      width: 400px;
+      height: 400px;
+      border: 1px solid white;
+      z-index: 10;
+      cursor: crosshair;
+      image-rendering: pixelated;
+    }
+    #noteDisplay {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 8px;
+      font-family: sans-serif;
+      font-size: 16px;
+      border-radius: 5px;
+      z-index: 30;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.153.0/build/three.min.js"></script>
+</head>
+<body>
+  <div id="ui">
+    DU: <input id="DU" value="0.16" step="0.01" type="number">
+    DV: <input id="DV" value="0.08" step="0.01" type="number"><br>
+    F:  <input id="F" value="0.06" step="0.001" type="number">
+    K:  <input id="K" value="0.062" step="0.001" type="number"><br>
+    Base Color: <input id="baseColor" type="color" value="#000000">
+    Highlight Color: <input id="highlightColor" type="color" value="#ffffff"><br>
+    <button id="resetBtn">Reset</button><br>
+    <p><b>Click and drag to draw</b></p>
+  </div>
+  <canvas id="overlay" width="400" height="400"></canvas>
+  <div id="noteDisplay"></div>
+
+  <script>
+    const WIDTH = 200, HEIGHT = 200;
+    const dt = 1.0;
+    const params = { DU: 0.16, DV: 0.08, F: 0.06, K: 0.062 };
+    let u, v, u_next, v_next;
+    let audioCtx = null;
+
+    const noteFrequencyMap = {
+      "C": 261.63,
+      "C#": 277.18, "Db": 277.18,
+      "D": 293.66,
+      "D#": 311.13, "Eb": 311.13,
+      "E": 329.63,
+      "F": 349.23,
+      "F#": 369.99, "Gb": 369.99,
+      "G": 392.00,
+      "G#": 415.30, "Ab": 415.30,
+      "A": 440.00,
+      "A#": 466.16, "Bb": 466.16,
+      "B": 493.88
+    };
+
+    const simCanvas = document.createElement('canvas');
+    simCanvas.width = WIDTH;
+    simCanvas.height = HEIGHT;
+    const simCtx = simCanvas.getContext('2d');
+
+    const overlayCanvas = document.getElementById('overlay');
+    const overlayCtx = overlayCanvas.getContext('2d');
+
+    function createGrid(val) {
+      return Array.from({ length: HEIGHT }, () => new Float32Array(WIDTH).fill(val));
+    }
+
+    const blueOverlay = createGrid(0);
+
+    function reset() {
+      u = createGrid(1);
+      v = createGrid(0);
+      u_next = createGrid(0);
+      v_next = createGrid(0);
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          const dx = x - WIDTH / 2;
+          const dy = y - HEIGHT / 2;
+          if (dx * dx + dy * dy < 400) {
+            v[y][x] = Math.random() * 0.5 + 0.5;
+            u[y][x] = 1 - v[y][x];
+          }
+          blueOverlay[y][x] = 0;
+        }
+      }
+    }
+
+    function lap(grid, x, y) {
+      const l = grid[y][(x - 1 + WIDTH) % WIDTH];
+      const r = grid[y][(x + 1) % WIDTH];
+      const u_ = grid[(y - 1 + HEIGHT) % HEIGHT][x];
+      const d = grid[(y + 1) % HEIGHT][x];
+      return l + r + u_ + d - 4 * grid[y][x];
+    }
+
+    function updateRD() {
+      params.DU = parseFloat(document.getElementById("DU").value);
+      params.DV = parseFloat(document.getElementById("DV").value);
+      params.F  = parseFloat(document.getElementById("F").value);
+      params.K  = parseFloat(document.getElementById("K").value);
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          const a = u[y][x], b = v[y][x];
+          const ua = lap(u, x, y);
+          const vb = lap(v, x, y);
+          const uvv = a * b * b;
+          u_next[y][x] = a + (params.DU * ua - uvv + params.F * (1 - a)) * dt;
+          v_next[y][x] = b + (params.DV * vb + uvv - (params.F + params.K) * b) * dt;
+        }
+      }
+      [u, u_next] = [u_next, u];
+      [v, v_next] = [v_next, v];
+    }
+
+    function smoothstep(x) {
+      return x * x * (3 - 2 * x);
+    }
+
+    function hexToRgb(hex) {
+      hex = hex.replace(/^#/, '');
+      const bigint = parseInt(hex, 16);
+      return [(bigint >> 16) & 255, (bigint >> 8) & 255, bigint & 255];
+    }
+
+    function proceduralColor(val) {
+      val = Math.max(0, Math.min(1, val));
+      const t = smoothstep(val);
+      const base = hexToRgb(document.getElementById("baseColor").value);
+      const highlight = hexToRgb(document.getElementById("highlightColor").value);
+      return [
+        Math.floor(base[0] + t * (highlight[0] - base[0])),
+        Math.floor(base[1] + t * (highlight[1] - base[1])),
+        Math.floor(base[2] + t * (highlight[2] - base[2]))
+      ];
+    }
+
+    function drawRD() {
+      const imageData = simCtx.getImageData(0, 0, WIDTH, HEIGHT);
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          const i = (y * WIDTH + x) * 4;
+          if (blueOverlay[y][x] > 0) {
+            imageData.data[i] = imageData.data[i + 1] = imageData.data[i + 2] = 255;
+          } else {
+            const [r, g, b] = proceduralColor(v[y][x]);
+            imageData.data[i] = r;
+            imageData.data[i + 1] = g;
+            imageData.data[i + 2] = b;
+          }
+          imageData.data[i + 3] = 255;
+        }
+      }
+      simCtx.putImageData(imageData, 0, 0);
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      for (let row = 0; row < 2; row++) {
+        for (let col = 0; col < 2; col++) {
+          overlayCtx.drawImage(simCanvas, col * WIDTH, row * HEIGHT, WIDTH, HEIGHT);
+        }
+      }
+      drawHardcodedTonnetz(overlayCtx);
+    }
+
+    function drawHardcodedTonnetz(ctx) {
+      const grid = [
+        ["C", "G", "D", "A", "E", "B", "F♯", "D♭", "A♭", "E♭", "B♭", "F"],
+        ["E♭", "B♭", "F", "C", "G", "D", "A", "E", "B", "F♯", "D♭", "A♭"],
+        ["B", "F♯", "D", "A♭", "E♭", "B♭", "F", "C", "G", "D", "A", "E"],
+        ["D", "A", "E", "B", "F♯", "D♭", "A♭", "E♭", "B♭", "F", "C", "G"],
+        ["B♭", "F", "C", "G", "D", "A", "E", "B", "F♯", "D♭", "A♭", "E♭"],
+        ["D♭", "A♭", "E♭", "B♭", "F", "C", "G", "D", "A", "E", "B"]
+      ];
+
+      const L = 40;
+      const marginY = 20;
+      const h = (ctx.canvas.height - 2 * marginY) / (grid.length - 1);
+
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,255,255,0.3)";
+      ctx.fillStyle = "white";
+      ctx.font = "10px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      for (let row = 0; row < grid.length; row++) {
+        const offsetX = (row % 2) * (L / 2);
+        for (let col = 0; col < grid[row].length; col++) {
+          const x = offsetX + col * L;
+          const y = marginY + row * h;
+          const note = grid[row][col];
+
+          ctx.beginPath();
+          ctx.arc(x, y, 2, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.fillText(note, x, y - 2);
+
+          if (col < grid[row].length - 1) {
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(offsetX + (col + 1) * L, y);
+            ctx.stroke();
+          }
+
+          if (row < grid.length - 1) {
+            if (row % 2 === 0) {
+              const nextOffsetX = ((row + 1) % 2) * (L / 2);
+              const downX = nextOffsetX + col * L;
+              const downY = (row + 1) * h + marginY;
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              ctx.lineTo(downX, downY);
+              ctx.stroke();
+
+              if (col > 0 || (row + 1) % 2 === 0) {
+                const leftX = nextOffsetX + ((col - 1 + grid[row].length) % grid[row].length) * L;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(leftX, downY);
+                ctx.stroke();
+              }
+            } else {
+              const nextOffsetX = ((row + 1) % 2) * (L / 2);
+              const downX = nextOffsetX + col * L;
+              const downY = (row + 1) * h + marginY;
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              ctx.lineTo(downX, downY);
+              ctx.stroke();
+
+              if (col < grid[row].length - 1) {
+                const rightX = nextOffsetX + ((col + 1) % grid[row].length) * L;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(rightX, downY);
+                ctx.stroke();
+              }
+            }
+          }
+        }
+      }
+      ctx.restore();
+    }
+
+    function fadeOverlay() {
+      const fadeRate = 0.1;
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          blueOverlay[y][x] = Math.max(0, blueOverlay[y][x] - fadeRate);
+        }
+      }
+    }
+
+    function drawOnOverlay(e) {
+      const rect = overlayCanvas.getBoundingClientRect();
+      const fullX = (e.clientX - rect.left) / rect.width * (WIDTH * 2);
+      const fullY = (e.clientY - rect.top) / rect.height * (HEIGHT * 2);
+      const x = Math.floor(fullX % WIDTH);
+      const y = Math.floor(fullY % HEIGHT);
+      for (let j = -3; j <= 3; j++) {
+        for (let i = -3; i <= 3; i++) {
+          const xx = (x + i + WIDTH) % WIDTH;
+          const yy = (y + j + HEIGHT) % HEIGHT;
+          blueOverlay[yy][xx] = 1;
+        }
+      }
+    }
+
+    function playNearestNote(e) {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+
+      const rect = overlayCanvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      const grid = [
+        ["C", "G", "D", "A", "E", "B", "F♯", "D♭", "A♭", "E♭", "B♭", "F"],
+        ["E♭", "B♭", "F", "C", "G", "D", "A", "E", "B", "F♯", "D♭", "A♭"],
+        ["B", "F♯", "D", "A♭", "E♭", "B♭", "F", "C", "G", "D", "A", "E"],
+        ["D", "A", "E", "B", "F♯", "D♭", "A♭", "E♭", "B♭", "F", "C", "G"],
+        ["B♭", "F", "C", "G", "D", "A", "E", "B", "F♯", "D♭", "A♭", "E♭"],
+        ["D♭", "A♭", "E♭", "B♭", "F", "C", "G", "D", "A", "E", "B"]
+      ];
+      const L = 40;
+      const marginY = 20;
+      const h = (overlayCanvas.height - 2 * marginY) / (grid.length - 1);
+
+      let nearestNote = null;
+      let minDist = Infinity;
+      let notePos = { x: 0, y: 0 };
+
+      for (let row = 0; row < grid.length; row++) {
+        const offsetX = (row % 2) * (L / 2);
+        for (let col = 0; col < grid[row].length; col++) {
+          const noteX = offsetX + col * L;
+          const noteY = marginY + row * h;
+          const dx = clickX - noteX;
+          const dy = clickY - noteY;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < minDist) {
+            minDist = dist;
+            nearestNote = grid[row][col];
+            notePos = { x: noteX, y: noteY };
+          }
+        }
+      }
+
+      document.getElementById("noteDisplay").textContent = "Played: " + nearestNote;
+
+      let cleanNote = nearestNote.replace("♯", "#").replace("♭", "b");
+      const freq = noteFrequencyMap[cleanNote];
+      if (freq) {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.5);
+      }
+      
+      let simX = Math.floor(notePos.x) % WIDTH;
+      let simY = Math.floor(notePos.y) % HEIGHT;
+    
+      const radius = 10;
+      for (let j = -radius; j <= radius; j++) {
+        for (let i = -radius; i <= radius; i++) {
+          if (i * i + j * j <= radius * radius) {
+            const gridX = (simX + i + WIDTH) % WIDTH;
+            const gridY = (simY + j + HEIGHT) % HEIGHT;
+            u[gridY][gridX] = 0;
+            v[gridY][gridX] = 0;
+          }
+        }
+      }
+    }
+
+    let isDrawing = false;
+    overlayCanvas.addEventListener("mousedown", e => {
+      isDrawing = true;
+      drawOnOverlay(e);
+      playNearestNote(e);
+    });
+    overlayCanvas.addEventListener("mousemove", e => { if (isDrawing) drawOnOverlay(e); });
+    overlayCanvas.addEventListener("mouseup", () => { isDrawing = false; });
+    overlayCanvas.addEventListener("mouseout", () => { isDrawing = false; });
+
+    document.getElementById("resetBtn").addEventListener("click", reset);
+
+    let scene, camera, renderer, torus, texture;
+    function initThree() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.z = 3;
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(3, 3, 3);
+      scene.add(light);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+
+      texture = new THREE.CanvasTexture(simCanvas);
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(2, 2);
+
+      const geometry = new THREE.TorusGeometry(1, 0.4, 128, 256);
+      const material = new THREE.MeshStandardMaterial({
+        map: texture,
+        displacementMap: texture,
+        displacementScale: 0.2,
+        metalness: 0.2,
+        roughness: 0.7
+      });
+      torus = new THREE.Mesh(geometry, material);
+      scene.add(torus);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      for (let i = 0; i < 10; i++) updateRD();
+      fadeOverlay();
+      drawRD();
+      texture.needsUpdate = true;
+      torus.rotation.x += 0.01;
+      torus.rotation.y += 0.01;
+      renderer.render(scene, camera);
+    }
+
+    reset();
+    initThree();
+    animate();
+  </script>
+</body>
+</html>
